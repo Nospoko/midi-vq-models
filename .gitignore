@@ -1,0 +1,8 @@
+*__pycache__*
+checkpoints
+outputs
+logs
+screenshots
+wandb
+sweep.yaml
+tmp
