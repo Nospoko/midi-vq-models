@@ -72,6 +72,7 @@ def get_model(checkpoint_path: str) -> MidiVQVAE:
         dim_mults=cfg.model.dim_mults,
         fsq_levels=cfg.model.fsq_levels,
         resnet_block_groups=cfg.model.num_resnet_groups,
+        causal=cfg.model.causal,
     ).to(device)
 
     model.load_state_dict(checkpoint["model"])
