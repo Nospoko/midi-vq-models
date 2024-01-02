@@ -7,7 +7,6 @@ from datasets import Dataset as HFDataset
 
 from data.augmentation import pitch_shift, change_speed
 
-
 class MidiDataset(Dataset):
     def __init__(
         self,
@@ -63,5 +62,14 @@ class MidiDataset(Dataset):
             "dstart": torch.tensor(record["dstart"], dtype=torch.float),
             "duration": torch.tensor(record["duration"], dtype=torch.float).clip(0.0, 5.0),
         }
+
+        # data = MidiFeatures(
+        #     filename=record["midi_filename"],
+        #     source=record["source"],
+        #     pitch=torch.tensor(record["pitch"], dtype=torch.long) - 21,
+        #     velocity=(torch.tensor(record["velocity"], dtype=torch.float) / 64) - 1,
+        #     dstart=torch.tensor(record["dstart"], dtype=torch.float),
+        #     duration=torch.tensor(record["duration"], dtype=torch.float).clip(0.0, 5.0),
+        # )
 
         return data

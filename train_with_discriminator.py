@@ -14,6 +14,7 @@ from torch.utils.data import Subset, DataLoader
 from datasets import load_dataset, concatenate_datasets
 
 from models.vqvae import MidiVQVAE
+from models.discriminator import Discriminator
 from data.dataset import MidiDataset
 from utils import MidiFeatures
 
@@ -91,10 +92,10 @@ def forward_step(
         duration=batch.duration,
     )
 
-    pred_pitch = pred_pitch.permute(0, 2, 1)
+    # pred_pitch = pred_pitch.permute(0, 2, 1)
 
     # calculate losses
-    pitch_loss = F.cross_entropy(pred_pitch, batch.pitch)
+    pitch_loss = F.cross_entropy(pred_pitch.permute(0, 2, 1), batch.pitch)
     velocity_loss = F.mse_loss(pred_velocity, batch.velocity)
     dstart_loss = F.mse_loss(pred_dstart, batch.dstart)
     duration_loss = F.mse_loss(pred_duration, batch.duration)
@@ -104,10 +105,19 @@ def forward_step(
 
     loss = loss_lambdas @ losses
 
-    pitch_acc = (torch.argmax(pred_pitch, dim=1) == batch.pitch).float().mean()
+    pitch_acc = (torch.argmax(pred_pitch, dim=-1) == batch.pitch).float().mean()
     velocity_r2 = M.r2_score(pred_velocity, batch.velocity)
     dstart_r2 = M.r2_score(pred_dstart, batch.dstart)
     duration_r2 = M.r2_score(pred_duration, batch.duration)
+
+    batch_pred = MidiFeatures(
+        filename=batch.filename,
+        source=batch.source,
+        pitch=F.gumbel_softmax(pred_pitch, hard=True, dim=-1),
+        velocity=pred_velocity,
+        dstart=pred_dstart,
+        duration=pred_duration,
+    )
 
     metrics = {
         "loss": loss.item(),
@@ -119,11 +129,33 @@ def forward_step(
         "velocity_r2": velocity_r2.item(),
         "dstart_r2": dstart_r2.item(),
         "duration_r2": duration_r2.item(),
-        "goal_weighted_sum": ((pitch_acc + velocity_r2 + dstart_r2 + duration_r2) / 4).item()
     }
 
-    return loss, metrics
+    return loss, batch_pred, metrics
 
+def discriminator_step(
+    discriminator: Discriminator,
+    batch: MidiFeatures,
+    batch_pred: MidiFeatures,
+):
+    disc_real = discriminator(F.one_hot(batch.pitch, num_classes=88).to(torch.float32), batch.velocity, batch.dstart, batch.duration)
+    disc_fake = discriminator(batch_pred.pitch, batch_pred.velocity, batch_pred.dstart, batch_pred.duration)
+
+    loss_discriminator = 0.5 * (torch.mean(F.relu(1. - disc_real)) + torch.mean(F.relu(1. + disc_fake)))
+    loss_generator = -torch.mean(disc_fake)
+
+    return loss_discriminator, loss_generator
+
+def calculate_alpha(model: MidiVQVAE, loss_reconstruction: torch.Tensor, loss_gan: torch.Tensor):
+    last_layer_weight = model.decoder.decoder[-1].weight
+
+    loss_reconstruction_grad = torch.autograd.grad(loss_reconstruction, last_layer_weight, retain_graph=True)[0]
+    loss_gan_grad = torch.autograd.grad(loss_gan, last_layer_weight, retain_graph=True)[0]
+
+    alpha = torch.norm(loss_reconstruction_grad) / (torch.norm(loss_gan_grad) + 1e-4)
+    alpha = alpha.clamp(0, 1e4)
+
+    return 0.8 * alpha
 
 @torch.no_grad()
 def validation_epoch(
@@ -145,23 +177,23 @@ def validation_epoch(
             "velocity_r2": 0.0,
             "dstart_r2": 0.0,
             "duration_r2": 0.0,
-            "goal_weighted_sum": 0.0,
         }
     )
 
     for batch_idx, batch in val_loop:
         batch = MidiFeatures(
-            filename=batch["filename"],
-            source=batch["source"],
-            pitch=batch["pitch"],
-            velocity=batch["velocity"],
-            dstart=batch["dstart"],
-            duration=batch["duration"],
-        )
+                filename=batch["filename"],
+                source=batch["source"],
+                pitch=batch["pitch"],
+                velocity=batch["velocity"],
+                dstart=batch["dstart"],
+                duration=batch["duration"],
+            )
 
         batch.to_(device)
+
         # metrics returns loss and additional metrics if specified in step function
-        _, metrics = forward_step(model, batch, loss_lambdas)
+        _, _, metrics = forward_step(model, batch, loss_lambdas)
 
         val_loop.set_postfix(metrics)
         metrics_epoch += Counter(metrics)
@@ -169,11 +201,12 @@ def validation_epoch(
     return metrics_epoch
 
 
-def save_checkpoint(model: MidiVQVAE, optimizer: optim.Optimizer, cfg: OmegaConf, save_path: str):
+def save_checkpoint(model: MidiVQVAE, discriminator: Discriminator, optimizer: optim.Optimizer, cfg: OmegaConf, save_path: str):
     # saving models
     torch.save(
         {
             "model": model.state_dict(),
+            "disciriminator": discriminator.state_dict(),
             "optimizer": optimizer.state_dict(),
             "config": cfg,
         },
@@ -236,8 +269,16 @@ def train(cfg: OmegaConf):
         causal=cfg.model.causal,
     ).to(device)
 
+    discriminator = Discriminator(
+        dim=cfg.model.dim,
+        dim_mults=cfg.model.dim_mults,
+        resnet_block_groups=cfg.model.num_resnet_groups,
+        causal=cfg.model.causal,
+    ).to(device)
+
     # setting up optimizer
     optimizer = optim.AdamW(model.parameters(), lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
+    optimizer_discriminator = optim.AdamW(discriminator.parameters(), lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
 
     # get loss lambdas as tensor
     loss_lambdas = torch.tensor(list(cfg.train.loss_lambdas.values()), dtype=torch.float, device=device)
@@ -255,6 +296,7 @@ def train(cfg: OmegaConf):
 
     # step counts for logging to wandb
     step_count = 0
+    disc_factor = 0.0
 
     for epoch in range(cfg.train.num_epochs):
         # train epoch
@@ -271,7 +313,6 @@ def train(cfg: OmegaConf):
                 "velocity_r2": 0.0,
                 "dstart_r2": 0.0,
                 "duration_r2": 0.0,
-                "goal_weighted_sum": 0.0,
             }
         )
 
@@ -287,12 +328,26 @@ def train(cfg: OmegaConf):
 
             batch.to_(device)
 
+            if step_count > cfg.train.discriminator_warmup:
+                disc_factor = 1.0
+
             # metrics returns loss and additional metrics if specified in step function
-            loss, metrics = forward_step(model, batch, loss_lambdas)
+            loss_reconstruction, batch_pred, metrics = forward_step(model, batch, loss_lambdas)
+
+            loss_discriminator, loss_generator = discriminator_step(discriminator, batch, batch_pred)
+            alpha = calculate_alpha(model, loss_reconstruction=loss_reconstruction, loss_gan=loss_generator)
+
+            loss = loss_reconstruction + alpha * loss_generator
+            loss_discriminator = disc_factor * loss_discriminator
 
             optimizer.zero_grad()
-            loss.backward()
+            loss.backward(retain_graph=True)
+
+            optimizer_discriminator.zero_grad()
+            loss_discriminator.backward()
+
             optimizer.step()
+            optimizer_discriminator.step()
 
             train_loop.set_postfix(metrics)
             step_count += 1
@@ -306,7 +361,7 @@ def train(cfg: OmegaConf):
                 wandb.log(metrics, step=step_count)
 
                 # save model and optimizer states
-                save_checkpoint(model, optimizer, cfg, save_path=save_path)
+                save_checkpoint(model, discriminator, optimizer, cfg, save_path=save_path)
 
         training_metrics_epoch = {
             "train_epoch/" + key: value / len(train_dataloader) for key, value in training_metrics_epoch.items()
@@ -336,7 +391,7 @@ def train(cfg: OmegaConf):
         wandb.log(metrics_epoch, step=step_count)
 
     # save model at the end of training
-    save_checkpoint(model, optimizer, cfg, save_path=save_path)
+    save_checkpoint(model, discriminator, optimizer, cfg, save_path=save_path)
 
     wandb.finish()
 

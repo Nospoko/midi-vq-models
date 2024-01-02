@@ -7,7 +7,6 @@ from models.encoder import Encoder
 from models.modules.quantization import FSQ
 from models.modules.features2embedding import Embedding2Feature, Feature2Embedding
 
-
 class MidiVQVAE(nn.Module):
     def __init__(
         self, 
