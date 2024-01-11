@@ -217,14 +217,6 @@ def train(cfg: OmegaConf):
         overfit_single_batch=cfg.train.overfit_single_batch,
     )
 
-    # logger
-    wandb.init(
-        project="midi-vqvae",
-        name=cfg.logger.run_name,
-        dir=cfg.paths.log_dir,
-        config=OmegaConf.to_container(cfg, resolve=True),
-    )
-
     device = torch.device(cfg.train.device)
 
     # model
@@ -235,6 +227,18 @@ def train(cfg: OmegaConf):
         resnet_block_groups=cfg.model.num_resnet_groups,
         causal=cfg.model.causal,
     ).to(device)
+
+    # checkpoint save path
+    num_params_millions = sum([p.numel() for p in model.parameters()]) / 1_000_000
+    save_path = f"{cfg.paths.save_ckpt_dir}/{cfg.logger.run_name}-params-{num_params_millions:.2f}M.ckpt"
+
+    # logger
+    wandb.init(
+        project="midi-vqvae",
+        name=save_path,
+        dir=cfg.paths.log_dir,
+        config=OmegaConf.to_container(cfg, resolve=True),
+    )
 
     # setting up optimizer
     optimizer = optim.AdamW(model.parameters(), lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
@@ -249,9 +253,6 @@ def train(cfg: OmegaConf):
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
 
-    # checkpoint save path
-    num_params_millions = sum([p.numel() for p in model.parameters()]) / 1_000_000
-    save_path = f"{cfg.paths.save_ckpt_dir}/{cfg.logger.run_name}-params-{num_params_millions:.2f}M.ckpt"
 
     # step counts for logging to wandb
     step_count = 0

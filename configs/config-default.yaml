@@ -6,15 +6,15 @@ train:
   dataset_name: ["JasiekKaczmarczyk/giant-midi-sustain-masked", "JasiekKaczmarczyk/pianofor-ai-sustain-masked", "JasiekKaczmarczyk/maestro-v1-sustain-masked"] # huggingface dataset
   batch_size: 128
   num_workers: 8
-  lr: 3e-5
+  lr: 3e-4
   weight_decay: 0.01
   pitch_shift_probability: 0.5
   time_stretch_probability: 0.5
-  num_epochs: 20
+  num_epochs: 50
   device: "cuda"
   precision: "16-mixed" # not implemented yet
   overfit_single_batch: False
-  discriminator_warmup: 500
+  # discriminator_warmup: 500
   loss_lambdas:
     pitch: 1.
     velocity: 1.
@@ -22,11 +22,11 @@ train:
     duration: 1.
 
 model:
-  dim: 64
-  dim_mults: [1, 2, 4, 8]
+  dim: 128
+  dim_mults: [1, 2, 4, 8, 8]
   fsq_levels: [8, 8, 8, 6, 5]
   num_resnet_groups: 4
-  causal: True
+  causal: False
 
 paths:
   save_ckpt_dir: "checkpoints" # directory where checkpoints will be saved
