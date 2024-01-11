@@ -230,7 +230,8 @@ def train(cfg: OmegaConf):
 
     # checkpoint save path
     num_params_millions = sum([p.numel() for p in model.parameters()]) / 1_000_000
-    save_path = f"{cfg.paths.save_ckpt_dir}/{cfg.logger.run_name}-params-{num_params_millions:.2f}M.ckpt"
+    run_name = f"{cfg.logger.run_name}-params-{num_params_millions:.2f}M.ckpt"
+    save_path = f"{cfg.paths.save_ckpt_dir}/{run_name}"
 
     # logger
     wandb.init(
@@ -256,6 +257,7 @@ def train(cfg: OmegaConf):
 
     # step counts for logging to wandb
     step_count = 0
+    notes_processed = 0
 
     for epoch in range(cfg.train.num_epochs):
         # train epoch
@@ -297,10 +299,12 @@ def train(cfg: OmegaConf):
 
             train_loop.set_postfix(metrics)
             step_count += 1
+            notes_processed += torch.numel(batch.pitch)
 
             training_metrics_epoch += Counter(metrics)
 
             if (batch_idx + 1) % cfg.logger.log_every_n_steps == 0:
+                metrics = metrics | {"epoch": epoch, "notes_processed": notes_processed}
                 metrics = {"train/" + key: value for key, value in metrics.items()}
 
                 # log metrics
