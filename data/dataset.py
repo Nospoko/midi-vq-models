@@ -7,6 +7,7 @@ from datasets import Dataset as HFDataset
 
 from data.augmentation import pitch_shift, change_speed
 
+
 class MidiDataset(Dataset):
     def __init__(
         self,

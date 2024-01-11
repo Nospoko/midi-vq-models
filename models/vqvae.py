@@ -7,12 +7,13 @@ from models.encoder import Encoder
 from models.modules.quantization import FSQ
 from models.modules.features2embedding import Embedding2Feature, Feature2Embedding
 
+
 class MidiVQVAE(nn.Module):
     def __init__(
-        self, 
-        dim: int, 
-        dim_mults: list[int] = [1, 2, 4, 8], 
-        fsq_levels: list[int] = [8, 8, 6, 5, 5], 
+        self,
+        dim: int,
+        dim_mults: list[int] = [1, 2, 4, 8],
+        fsq_levels: list[int] = [8, 8, 6, 5, 5],
         resnet_block_groups: int = 4,
         causal: bool = False,
     ):

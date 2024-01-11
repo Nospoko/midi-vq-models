@@ -1,4 +1,4 @@
-datasets==2.13.1
+datasets==2.16.1
 einops==0.6.0
 fortepyan==0.2.1
 huggingface_hub==0.12.0
@@ -9,5 +9,6 @@ pre-commit==3.3.3
 streamlit==1.29.0
 streamlit-pianoroll==0.1.3
 torch==2.0.1
+torchmetrics==1.3.0
 tqdm==4.64.1
 wandb==0.15.8
