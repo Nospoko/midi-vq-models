@@ -4,5 +4,4 @@ outputs
 logs
 screenshots
 wandb
-sweep.yaml
 tmp

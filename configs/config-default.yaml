@@ -10,7 +10,7 @@ train:
   weight_decay: 0.01
   pitch_shift_probability: 0.5
   time_stretch_probability: 0.5
-  num_epochs: 50
+  num_epochs: 10
   device: "cuda"
   precision: "16-mixed" # not implemented yet
   overfit_single_batch: False

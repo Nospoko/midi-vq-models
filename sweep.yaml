@@ -1,0 +1,17 @@
+method: grid
+metric:
+  goal: maximize
+  name: train/goal_weighted_sum
+parameters:
+  train.num_epochs:
+    value: 50
+  model.dim:
+    values: [32, 64, 128]
+  model.dim_mults:
+    values: [[1, 2, 4, 8], [1, 2, 4, 8, 8]]
+program: train.py
+
+command:
+  - python
+  - ${program}
+  - ${args_no_hyphens}
