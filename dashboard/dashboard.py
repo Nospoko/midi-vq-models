@@ -141,14 +141,17 @@ def main():
     model, _ = model_selection()
 
     # Prep data
-    dataset_name = st.selectbox(
-        label="Select dataset",
-        options=["roszcz/maestro-sustain-v2", "roszcz/giant-midi-sustain-v2"],
-    )
-    selected_dataset = get_dataset(dataset_name)
+    dataset_cols = st.columns(2)
+    with dataset_cols[0]:
+        dataset_name = st.selectbox(
+            label="Select dataset",
+            options=["roszcz/maestro-sustain-v2", "roszcz/giant-midi-sustain-v2"],
+        )
+        selected_dataset = get_dataset(dataset_name)
 
-    available_splits = list(selected_dataset.keys())
-    split = st.selectbox("Choose split", options=available_splits)
+    with dataset_cols[1]:
+        available_splits = list(selected_dataset.keys())
+        split = st.selectbox("Choose split", options=available_splits)
 
     # Use precise split as a dataset for review
     dataset = selected_dataset[split]
@@ -156,19 +159,24 @@ def main():
     source = [json.loads(source) for source in dataset["source"]]
     source_df = pd.DataFrame(source)
 
-    composers = source_df.composer.unique()
-    selected_composer = st.selectbox(
-        label="Select composer",
-        options=composers,
-        index=3,
-    )
+    # Slect piece for review
+    piece_columns = st.columns(2)
+    with piece_columns[0]:
+        composers = source_df.composer.unique()
+        selected_composer = st.selectbox(
+            label="Select composer",
+            options=composers,
+            index=3,
+        )
 
-    ids = source_df.composer == selected_composer
-    piece_titles = source_df[ids].title.unique()
-    selected_title = st.selectbox(
-        label="Select title",
-        options=piece_titles,
-    )
+    with piece_columns[1]:
+        ids = source_df.composer == selected_composer
+        piece_titles = source_df[ids].title.unique()
+        selected_title = st.selectbox(
+            label="Select title",
+            options=piece_titles,
+        )
+
     st.write(selected_title)
 
     ids = (source_df.composer == selected_composer) & (source_df.title == selected_title)
