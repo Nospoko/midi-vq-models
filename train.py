@@ -29,7 +29,7 @@ def makedir_if_not_exists(dir: str):
 
 
 def preprocess_dataset(
-    dataset_name: list[str],
+    dataset_names: list[str],
     batch_size: int,
     num_workers: int,
     pitch_shift_probability: float,
@@ -43,10 +43,10 @@ def preprocess_dataset(
     val_ds = []
     test_ds = []
 
-    for ds_name in dataset_name:
-        tr_ds = load_dataset(ds_name, split="train", use_auth_token=hf_token)
-        v_ds = load_dataset(ds_name, split="validation", use_auth_token=hf_token)
-        t_ds = load_dataset(ds_name, split="test", use_auth_token=hf_token)
+    for dataset_name in dataset_names:
+        tr_ds = load_dataset(dataset_name, split="train", use_auth_token=hf_token)
+        v_ds = load_dataset(dataset_name, split="validation", use_auth_token=hf_token)
+        t_ds = load_dataset(dataset_name, split="test", use_auth_token=hf_token)
 
         train_ds.append(tr_ds)
         val_ds.append(v_ds)
@@ -206,7 +206,7 @@ def train(cfg: OmegaConf):
 
     # dataset
     train_dataloader, val_dataloader, _ = preprocess_dataset(
-        dataset_name=cfg.train.dataset_name,
+        dataset_names=cfg.train.dataset_names,
         batch_size=cfg.train.batch_size,
         num_workers=cfg.train.num_workers,
         pitch_shift_probability=cfg.train.pitch_shift_probability,
@@ -215,8 +215,9 @@ def train(cfg: OmegaConf):
     )
 
     # validate on quantized maestro
+    # This dataset is already in cfg.train.dataset_names - is this unneccessary duplication?
     _, maestro_test, _ = preprocess_dataset(
-        dataset_name=["JasiekKaczmarczyk/maestro-v1-sustain-masked"],
+        dataset_names=["JasiekKaczmarczyk/maestro-v1-sustain-masked"],
         batch_size=cfg.train.batch_size,
         num_workers=cfg.train.num_workers,
         pitch_shift_probability=cfg.train.pitch_shift_probability,
@@ -310,6 +311,8 @@ def train(cfg: OmegaConf):
             if (batch_idx + 1) % cfg.logger.log_every_n_steps == 0:
                 metrics = {"epoch": epoch, "step": batch_idx, "notes_processed": notes_processed} | metrics
                 print_metrics(metrics)
+
+                metrics |= {"learning_rate": cfg.train.lr}
                 metrics = {"train/" + key: value for key, value in metrics.items()}
 
                 # log metrics
