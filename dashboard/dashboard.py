@@ -92,10 +92,7 @@ def model_selection() -> MidiVQVAE:
 @st.cache_data
 def get_dataset(dataset_name: str) -> Dataset:
     # dataset_name = "JasiekKaczmarczyk/maestro-v1-sustain-masked"
-    dataset = load_dataset(dataset_name, split="train")
-
-    # available_splits = list(dataset.keys())
-    # split = st.selectbox("Choose split", options=available_splits)
+    dataset = load_dataset(dataset_name)
 
     return dataset
 
@@ -148,7 +145,14 @@ def main():
         label="Select dataset",
         options=["roszcz/maestro-sustain-v2", "roszcz/giant-midi-sustain-v2"],
     )
-    dataset = get_dataset(dataset_name)
+    selected_dataset = get_dataset(dataset_name)
+
+    available_splits = list(selected_dataset.keys())
+    split = st.selectbox("Choose split", options=available_splits)
+
+    # Use precise split as a dataset for review
+    dataset = selected_dataset[split]
+
     source = [json.loads(source) for source in dataset["source"]]
     source_df = pd.DataFrame(source)
 
