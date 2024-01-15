@@ -39,4 +39,4 @@ paths:
 
 logger:
   run_name: midi-vqvae-${now:%Y-%m-%d-%H-%M}
-  log_every_n_steps: 200
+  log_every_n_steps: 500

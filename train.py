@@ -238,13 +238,13 @@ def train(cfg: OmegaConf):
 
     # checkpoint save path
     num_params_millions = sum([p.numel() for p in model.parameters()]) / 1_000_000
-    run_name = f"{cfg.logger.run_name}-params-{num_params_millions:.2f}M.ckpt"
+    run_name = f"{cfg.logger.run_name}-{num_params_millions:.2f}M.ckpt"
     save_path = f"{cfg.paths.save_ckpt_dir}/{run_name}"
 
     # logger
     wandb.init(
         project="midi-vqvae",
-        name=save_path,
+        name=run_name,
         dir=cfg.paths.log_dir,
         config=OmegaConf.to_container(cfg, resolve=True),
     )

@@ -83,6 +83,10 @@ def get_model(checkpoint_path: str) -> MidiVQVAE:
 
 def model_selection() -> MidiVQVAE:
     checkpoints = glob("checkpoints/*")
+
+    # Newest first
+    checkpoints.sort(reverse=True)
+
     checkpoint_path = st.selectbox("Select checkpoint", options=checkpoints)
 
     model, cfg = get_model(checkpoint_path)
