@@ -8,6 +8,7 @@ import pandas as pd
 import fortepyan as ff
 import streamlit as st
 from omegaconf import OmegaConf
+from matplotlib import pyplot as plt
 from torch.utils.data import DataLoader
 from datasets import Dataset, load_dataset
 from streamlit_pianoroll import from_fortepyan
@@ -25,10 +26,22 @@ def display_pianoroll(processing_result: dict):
 
     with col1:
         st.write("### Original")
-        from_fortepyan(processing_result["original"])
+        original_piece = processing_result["original"]
+        from_fortepyan(original_piece)
+
+        fig, ax = plt.subplots(figsize=[13, 4])
+        ax.set_title("Original dstart")
+        ax.plot(original_piece.df.dstart.values, "--o")
+        st.pyplot(fig)
     with col2:
         st.write("### Reconstructed")
-        from_fortepyan(processing_result["generated"])
+        generated_piece = processing_result["generated"]
+        from_fortepyan(generated_piece)
+
+        fig, ax = plt.subplots(figsize=[13, 4])
+        ax.plot(generated_piece.df.dstart.values, "--o")
+        ax.set_title("Generated dstart")
+        st.pyplot(fig)
 
 
 def denormalize_velocity(velocity: np.ndarray):
