@@ -234,6 +234,8 @@ def train(cfg: OmegaConf):
         fsq_levels=cfg.model.fsq_levels,
         resnet_block_groups=cfg.model.num_resnet_groups,
         causal=cfg.model.causal,
+        positional_embedding=cfg.model.positional_embedding,
+        output_block_type=cfg.model.output_block_type,
     ).to(device)
 
     # checkpoint save path
