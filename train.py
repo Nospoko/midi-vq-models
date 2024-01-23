@@ -3,8 +3,6 @@ from collections import Counter
 
 import hydra
 import torch
-import wandb
-from tqdm import tqdm
 import torch.optim as optim
 import torch.nn.functional as F
 from omegaconf import OmegaConf
@@ -13,9 +11,17 @@ from huggingface_hub import upload_file
 from torch.utils.data import Subset, DataLoader
 from datasets import load_dataset, concatenate_datasets
 
+import wandb
+from utils import MidiFeatures
 from models.vqvae import MidiVQVAE
 from data.dataset import MidiDataset
-from utils import MidiFeatures
+
+
+def print_metrics(metrics: dict):
+    text = "|".join([f"{k}: {v:.2f}" for k, v in metrics.items()])
+
+    print(text)
+
 
 def makedir_if_not_exists(dir: str):
     if not os.path.exists(dir):
@@ -23,7 +29,7 @@ def makedir_if_not_exists(dir: str):
 
 
 def preprocess_dataset(
-    dataset_name: list[str],
+    dataset_names: list[str],
     batch_size: int,
     num_workers: int,
     pitch_shift_probability: float,
@@ -37,10 +43,10 @@ def preprocess_dataset(
     val_ds = []
     test_ds = []
 
-    for ds_name in dataset_name:
-        tr_ds = load_dataset(ds_name, split="train", use_auth_token=hf_token)
-        v_ds = load_dataset(ds_name, split="validation", use_auth_token=hf_token)
-        t_ds = load_dataset(ds_name, split="test", use_auth_token=hf_token)
+    for dataset_name in dataset_names:
+        tr_ds = load_dataset(dataset_name, split="train", use_auth_token=hf_token)
+        v_ds = load_dataset(dataset_name, split="validation", use_auth_token=hf_token)
+        t_ds = load_dataset(dataset_name, split="test", use_auth_token=hf_token)
 
         train_ds.append(tr_ds)
         val_ds.append(v_ds)
@@ -119,7 +125,7 @@ def forward_step(
         "velocity_r2": velocity_r2.item(),
         "dstart_r2": dstart_r2.item(),
         "duration_r2": duration_r2.item(),
-        "goal_weighted_sum": ((pitch_acc + velocity_r2 + dstart_r2 + duration_r2) / 4).item()
+        "goal_weighted_sum": ((pitch_acc + velocity_r2 + dstart_r2 + duration_r2) / 4).item(),
     }
 
     return loss, metrics
@@ -131,9 +137,9 @@ def validation_epoch(
     dataloader: DataLoader,
     loss_lambdas: torch.Tensor,
     device: torch.device,
+    cfg: OmegaConf,
 ) -> dict:
     # val epoch
-    val_loop = tqdm(enumerate(dataloader), total=len(dataloader), leave=False)
     metrics_epoch = Counter(
         {
             "loss": 0.0,
@@ -149,7 +155,7 @@ def validation_epoch(
         }
     )
 
-    for batch_idx, batch in val_loop:
+    for batch_idx, batch in enumerate(dataloader):
         batch = MidiFeatures(
             filename=batch["filename"],
             source=batch["source"],
@@ -163,7 +169,8 @@ def validation_epoch(
         # metrics returns loss and additional metrics if specified in step function
         _, metrics = forward_step(model, batch, loss_lambdas)
 
-        val_loop.set_postfix(metrics)
+        if (batch_idx + 1) % cfg.logger.log_every_n_steps == 0:
+            print_metrics(metrics)
         metrics_epoch += Counter(metrics)
 
     return metrics_epoch
@@ -199,7 +206,7 @@ def train(cfg: OmegaConf):
 
     # dataset
     train_dataloader, val_dataloader, _ = preprocess_dataset(
-        dataset_name=cfg.train.dataset_name,
+        dataset_names=cfg.train.dataset_names,
         batch_size=cfg.train.batch_size,
         num_workers=cfg.train.num_workers,
         pitch_shift_probability=cfg.train.pitch_shift_probability,
@@ -208,8 +215,9 @@ def train(cfg: OmegaConf):
     )
 
     # validate on quantized maestro
+    # This dataset is already in cfg.train.dataset_names - is this unneccessary duplication?
     _, maestro_test, _ = preprocess_dataset(
-        dataset_name=["JasiekKaczmarczyk/maestro-v1-sustain-masked"],
+        dataset_names=["JasiekKaczmarczyk/maestro-v1-sustain-masked"],
         batch_size=cfg.train.batch_size,
         num_workers=cfg.train.num_workers,
         pitch_shift_probability=cfg.train.pitch_shift_probability,
@@ -226,17 +234,19 @@ def train(cfg: OmegaConf):
         fsq_levels=cfg.model.fsq_levels,
         resnet_block_groups=cfg.model.num_resnet_groups,
         causal=cfg.model.causal,
+        positional_embedding=cfg.model.positional_embedding,
+        output_block_type=cfg.model.output_block_type,
     ).to(device)
 
     # checkpoint save path
     num_params_millions = sum([p.numel() for p in model.parameters()]) / 1_000_000
-    run_name = f"{cfg.logger.run_name}-params-{num_params_millions:.2f}M.ckpt"
+    run_name = f"{cfg.logger.run_name}-{num_params_millions:.2f}M.ckpt"
     save_path = f"{cfg.paths.save_ckpt_dir}/{run_name}"
 
     # logger
     wandb.init(
         project="midi-vqvae",
-        name=save_path,
+        name=run_name,
         dir=cfg.paths.log_dir,
         config=OmegaConf.to_container(cfg, resolve=True),
     )
@@ -254,7 +264,6 @@ def train(cfg: OmegaConf):
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
 
-
     # step counts for logging to wandb
     step_count = 0
     notes_processed = 0
@@ -262,7 +271,6 @@ def train(cfg: OmegaConf):
     for epoch in range(cfg.train.num_epochs):
         # train epoch
         model.train()
-        train_loop = tqdm(enumerate(train_dataloader), total=len(train_dataloader), leave=False)
         training_metrics_epoch = Counter(
             {
                 "loss": 0.0,
@@ -278,7 +286,7 @@ def train(cfg: OmegaConf):
             }
         )
 
-        for batch_idx, batch in train_loop:
+        for batch_idx, batch in enumerate(train_dataloader):
             batch = MidiFeatures(
                 filename=batch["filename"],
                 source=batch["source"],
@@ -297,14 +305,16 @@ def train(cfg: OmegaConf):
             loss.backward()
             optimizer.step()
 
-            train_loop.set_postfix(metrics)
             step_count += 1
             notes_processed += torch.numel(batch.pitch)
 
             training_metrics_epoch += Counter(metrics)
 
             if (batch_idx + 1) % cfg.logger.log_every_n_steps == 0:
-                metrics = metrics | {"epoch": epoch, "notes_processed": notes_processed}
+                metrics = {"epoch": epoch, "step": batch_idx, "notes_processed": notes_processed} | metrics
+                print_metrics(metrics)
+
+                metrics |= {"learning_rate": cfg.train.lr}
                 metrics = {"train/" + key: value for key, value in metrics.items()}
 
                 # log metrics
@@ -320,20 +330,24 @@ def train(cfg: OmegaConf):
         model.eval()
 
         # val epoch
+        print("Validation")
         val_metrics_epoch = validation_epoch(
-            model,
-            val_dataloader,
-            loss_lambdas,
-            device,
+            model=model,
+            dataloader=val_dataloader,
+            loss_lambdas=loss_lambdas,
+            device=device,
+            cfg=cfg,
         )
         val_metrics_epoch = {"val_epoch/" + key: value / len(val_dataloader) for key, value in val_metrics_epoch.items()}
 
         # maestro test epoch
+        print("Test (maestro)")
         test_metrics_epoch = validation_epoch(
-            model,
-            maestro_test,
-            loss_lambdas,
-            device,
+            model=model,
+            dataloader=maestro_test,
+            loss_lambdas=loss_lambdas,
+            device=device,
+            cfg=cfg,
         )
         test_metrics_epoch = {"maestro_epoch/" + key: value / len(maestro_test) for key, value in test_metrics_epoch.items()}
 

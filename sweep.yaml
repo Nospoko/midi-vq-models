@@ -4,11 +4,23 @@ metric:
   name: train/goal_weighted_sum
 parameters:
   train.num_epochs:
-    value: 50
+    value: 25
+  train.lr:
+    values: [3e-5, 1e-4]
   model.dim:
-    values: [32, 64, 128]
+    value: 60
   model.dim_mults:
-    values: [[1, 2, 4, 8], [1, 2, 4, 8, 8]]
+    value: [1, 2, 4, 8]
+
+  train.loss_lambdas.velocity:
+    values: [20, 10]
+  train.loss_lambdas.duration:
+    values: [2, 4]
+  train.loss_lambdas.pitch:
+    values: [0.3, 0.5]
+  train.loss_lambdas.dstart:
+    values: [40, 20]
+
 program: train.py
 
 command:

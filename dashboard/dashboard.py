@@ -8,6 +8,7 @@ import pandas as pd
 import fortepyan as ff
 import streamlit as st
 from omegaconf import OmegaConf
+from matplotlib import pyplot as plt
 from torch.utils.data import DataLoader
 from datasets import Dataset, load_dataset
 from streamlit_pianoroll import from_fortepyan
@@ -25,10 +26,22 @@ def display_pianoroll(processing_result: dict):
 
     with col1:
         st.write("### Original")
-        from_fortepyan(processing_result["original"])
+        original_piece = processing_result["original"]
+        from_fortepyan(original_piece)
+
+        fig, ax = plt.subplots(figsize=[13, 4])
+        ax.set_title("Original dstart")
+        ax.plot(original_piece.df.dstart.values, "--o")
+        st.pyplot(fig)
     with col2:
         st.write("### Reconstructed")
-        from_fortepyan(processing_result["generated"])
+        generated_piece = processing_result["generated"]
+        from_fortepyan(generated_piece)
+
+        fig, ax = plt.subplots(figsize=[13, 4])
+        ax.plot(generated_piece.df.dstart.values, "--o")
+        ax.set_title("Generated dstart")
+        st.pyplot(fig)
 
 
 def denormalize_velocity(velocity: np.ndarray):
@@ -83,6 +96,10 @@ def get_model(checkpoint_path: str) -> MidiVQVAE:
 
 def model_selection() -> MidiVQVAE:
     checkpoints = glob("checkpoints/*")
+
+    # Newest first
+    checkpoints.sort(reverse=True)
+
     checkpoint_path = st.selectbox("Select checkpoint", options=checkpoints)
 
     model, cfg = get_model(checkpoint_path)
@@ -92,10 +109,7 @@ def model_selection() -> MidiVQVAE:
 @st.cache_data
 def get_dataset(dataset_name: str) -> Dataset:
     # dataset_name = "JasiekKaczmarczyk/maestro-v1-sustain-masked"
-    dataset = load_dataset(dataset_name, split="train")
-
-    # available_splits = list(dataset.keys())
-    # split = st.selectbox("Choose split", options=available_splits)
+    dataset = load_dataset(dataset_name)
 
     return dataset
 
@@ -144,27 +158,42 @@ def main():
     model, _ = model_selection()
 
     # Prep data
-    dataset_name = st.selectbox(
-        label="Select dataset",
-        options=["roszcz/maestro-sustain-v2", "roszcz/giant-midi-sustain-v2"],
-    )
-    dataset = get_dataset(dataset_name)
+    dataset_cols = st.columns(2)
+    with dataset_cols[0]:
+        dataset_name = st.selectbox(
+            label="Select dataset",
+            options=["roszcz/maestro-sustain-v2", "roszcz/giant-midi-sustain-v2"],
+        )
+        selected_dataset = get_dataset(dataset_name)
+
+    with dataset_cols[1]:
+        available_splits = list(selected_dataset.keys())
+        split = st.selectbox("Choose split", options=available_splits)
+
+    # Use precise split as a dataset for review
+    dataset = selected_dataset[split]
+
     source = [json.loads(source) for source in dataset["source"]]
     source_df = pd.DataFrame(source)
 
-    composers = source_df.composer.unique()
-    selected_composer = st.selectbox(
-        label="Select composer",
-        options=composers,
-        index=3,
-    )
+    # Slect piece for review
+    piece_columns = st.columns(2)
+    with piece_columns[0]:
+        composers = source_df.composer.unique()
+        selected_composer = st.selectbox(
+            label="Select composer",
+            options=composers,
+            index=3,
+        )
 
-    ids = source_df.composer == selected_composer
-    piece_titles = source_df[ids].title.unique()
-    selected_title = st.selectbox(
-        label="Select title",
-        options=piece_titles,
-    )
+    with piece_columns[1]:
+        ids = source_df.composer == selected_composer
+        piece_titles = source_df[ids].title.unique()
+        selected_title = st.selectbox(
+            label="Select title",
+            options=piece_titles,
+        )
+
     st.write(selected_title)
 
     ids = (source_df.composer == selected_composer) & (source_df.title == selected_title)

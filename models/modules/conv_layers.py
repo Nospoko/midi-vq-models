@@ -80,7 +80,7 @@ class Block(nn.Module):
         # creating mask
         if causal:
             mask = torch.ones(kernel_size)
-            mask[kernel_size//2+1:] = 0
+            mask[kernel_size // 2 + 1 :] = 0
             self.register_buffer("mask", mask[None])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

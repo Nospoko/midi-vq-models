@@ -5,29 +5,38 @@ import torch.nn as nn
 from models.decoder import Decoder
 from models.encoder import Encoder
 from models.modules.quantization import FSQ
-from models.modules.features2embedding import Embedding2Feature, Feature2Embedding
+from models.modules.features2embedding import FeatureProjection, TransformerFeatureProjection
+from models.modules.positional_embedding import SinusoidalPositionEmbeddings
+
 
 class MidiVQVAE(nn.Module):
     def __init__(
-        self, 
-        dim: int, 
-        dim_mults: list[int] = [1, 2, 4, 8], 
-        fsq_levels: list[int] = [8, 8, 6, 5, 5], 
+        self,
+        dim: int,
+        dim_mults: list[int] = [1, 2, 4, 8],
+        fsq_levels: list[int] = [8, 8, 6, 5, 5],
         resnet_block_groups: int = 4,
         causal: bool = False,
+        positional_embedding: bool = False,
+        output_block_type: str = "linear",
     ):
         super().__init__()
 
         # list of dimensions
         dims = [dim, *map(lambda m: dim * m, dim_mults)]
         quantization_dim = len(fsq_levels)
-
+        
         # embedding heads
         self.pitch_embedding = nn.Embedding(num_embeddings=88, embedding_dim=dim)
-        self.velocity_embedding = Feature2Embedding(1, dim)
-        self.dstart_embedding = Feature2Embedding(1, dim)
-        self.duration_embedding = Feature2Embedding(1, dim)
+        self.velocity_embedding = FeatureProjection(1, dim, dim)
+        self.dstart_embedding = FeatureProjection(1, dim, dim)
+        self.duration_embedding = FeatureProjection(1, dim, dim)
 
+        if positional_embedding:
+            self.pos_emb = SinusoidalPositionEmbeddings(4*dim)
+        else:
+            self.pos_emb = None
+        
         # initial conv
         self.init_conv = nn.Conv1d(4 * dim, dim, kernel_size=1)
 
@@ -46,10 +55,16 @@ class MidiVQVAE(nn.Module):
         self.out_conv = nn.Conv1d(dim, 4 * dim, kernel_size=1)
 
         # output heads
-        self.pitch_out = Embedding2Feature(4 * dim, 88)
-        self.velocity_out = Feature2Embedding(4 * dim, 1)
-        self.dstart_out = Feature2Embedding(4 * dim, 1)
-        self.duration_out = Feature2Embedding(4 * dim, 1)
+        if output_block_type == "linear":
+            self.pitch_out = FeatureProjection(4 * dim, dim, 88)
+            self.velocity_out = FeatureProjection(4 * dim, dim, 1)
+            self.dstart_out = FeatureProjection(4 * dim, dim, 1)
+            self.duration_out = FeatureProjection(4 * dim, dim, 1)
+        elif output_block_type == "transformer":
+            self.pitch_out = TransformerFeatureProjection(4 * dim, 88)
+            self.velocity_out = TransformerFeatureProjection(4 * dim, 1)
+            self.dstart_out = TransformerFeatureProjection(4 * dim, 1)
+            self.duration_out = TransformerFeatureProjection(4 * dim, 1)
 
     def _features_to_embedding(self, pitch: torch.Tensor, velocity: torch.Tensor, dstart: torch.Tensor, duration: torch.Tensor):
         pitch_emb = self.pitch_embedding(pitch)
@@ -59,6 +74,10 @@ class MidiVQVAE(nn.Module):
 
         # shape: [batch_size, seq_len, embedding_dim]
         x = torch.cat([pitch_emb, velocity_emb, dstart_emb, duration_emb], dim=-1)
+
+        if self.pos_emb is not None:
+            x = x + self.pos_emb(x)
+
         # shape: [batch_size, embedding_dim, seq_len] for convolution
         x = x.permute(0, 2, 1)
 

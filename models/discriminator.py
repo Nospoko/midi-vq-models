@@ -1,24 +1,18 @@
 import torch
 import torch.nn as nn
 
-from models.modules.conv_layers import ResnetBlock, Downsample, PreNorm, Residual
 from models.modules.attention_layers import ConvAttention
 from models.modules.features2embedding import Feature2Embedding
+from models.modules.conv_layers import PreNorm, Residual, Downsample, ResnetBlock
+
 
 class Discriminator(nn.Module):
-    def __init__(
-        self, 
-        dim: int, 
-        dim_mults: list[int] = [1, 2, 4, 8],
-        resnet_block_groups: int = 4,
-        causal: bool = False
-    ):
+    def __init__(self, dim: int, dim_mults: list[int] = [1, 2, 4, 8], resnet_block_groups: int = 4, causal: bool = False):
         super().__init__()
 
         # get list of corresponding ins and outs
         dims = [dim, *map(lambda m: dim * m, dim_mults)]
         ins_outs = list(zip(dims[:-1], dims[1:]))
-        num_resolutions = len(ins_outs)
 
         # embedding heads
         self.pitch_embedding = nn.Embedding(num_embeddings=88, embedding_dim=dim)
@@ -32,15 +26,13 @@ class Discriminator(nn.Module):
         layers = []
 
         for idx, (ins, outs) in enumerate(ins_outs):
-            is_last = idx >= (num_resolutions - 1)
-
             layers += [
                 ResnetBlock(ins, ins, kernel_size=9, groups=resnet_block_groups, causal=causal),
                 ResnetBlock(ins, ins, kernel_size=9, groups=resnet_block_groups, causal=causal),
                 Residual(PreNorm(ins, ConvAttention(ins, causal=causal))),
                 Downsample(ins, outs),
             ]
-        
+
         layers += [nn.Conv1d(dims[-1], 1, kernel_size=1)]
 
         self.discriminator = nn.Sequential(*layers)
