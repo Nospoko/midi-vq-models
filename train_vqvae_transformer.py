@@ -237,6 +237,7 @@ def train(cfg: OmegaConf):
         num_heads=cfg.model.num_heads,
         fsq_levels=cfg.model.fsq_levels,
         mlp_ratio=cfg.model.mlp_ratio,
+        change_resolution_at_depth=cfg.model.change_resolution_at_depth,
     ).to(device)
 
     # checkpoint save path

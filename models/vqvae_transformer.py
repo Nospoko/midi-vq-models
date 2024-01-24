@@ -1,12 +1,132 @@
 import torch
 import torch.nn as nn
+import einops
 
 from timm.models.vision_transformer import Block
-from models.modules.cape import CAPE1d
+# from models.modules.cape import CAPE1d
 from models.modules.quantization import FSQ
 from models.modules.features2embedding import TransformerFeatureProjection
 from models.modules.positional_embedding import SinusoidalPositionEmbeddingsV2
 from models.modules.attention_layers import DownsampleAttention, UpsampleAttention
+
+class UpsampleConv(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+
+        self.block = nn.Sequential(
+        nn.Upsample(scale_factor=2, mode="nearest"),
+        nn.Conv1d(dim, dim, 3, padding=1),
+    )
+
+    def forward(self, x: torch.Tensor):
+        x = einops.rearrange(x, "b l d -> b d l")
+        x = self.block(x)
+        x = einops.rearrange(x, "b d l -> b l d")
+
+        return x
+    
+class DownsampleConv(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+
+        self.block = nn.Sequential(
+            nn.Conv1d(dim * 2, dim, 1),
+        )
+
+    def forward(self, x: torch.Tensor):
+        x = einops.rearrange(x, "b (l p) d -> b (d p) l", p=2)
+        x = self.block(x)
+        x = einops.rearrange(x, "b d l -> b l d")
+
+        return x
+
+class TransformerEncoder(nn.Module):
+    def __init__(
+            self,
+            dim: int = 768,
+            depth: int = 6,
+            num_heads: int = 12,
+            mlp_ratio: float = 4.0,
+            change_resolution_at_depth: list[int] = [],
+        ):
+        super().__init__()
+
+        # encoder
+        self.encoder = nn.ModuleList([])
+
+        for i in range(depth):
+            self.encoder.append(
+                Block(
+                    dim=dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    qkv_bias=True,
+                )
+            )
+
+            if i in change_resolution_at_depth:
+                self.encoder.append(
+                    # DownsampleAttention(
+                    #     dim=dim,
+                    #     downsample_factor=2,
+                    #     heads=num_heads,
+                    #     causal=False,
+                    # )
+                    DownsampleConv(dim)
+                )
+
+        self.encoder.append(nn.LayerNorm(dim))
+
+    def forward(self, x: torch.Tensor):
+        for layer in self.encoder:
+            x = layer(x)
+
+        return x
+    
+
+class TransformerDecoder(nn.Module):
+    def __init__(
+            self,
+            dim: int = 768,
+            depth: int = 6,
+            num_heads: int = 12,
+            mlp_ratio: float = 4.0,
+            change_resolution_at_depth: list[int] = [],
+        ):
+        super().__init__()
+
+        # encoder
+        self.decoder = nn.ModuleList([])
+
+        for i in range(depth):
+            self.decoder.append(
+                Block(
+                    dim=dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    qkv_bias=True,
+                )
+            )
+
+            if i in change_resolution_at_depth:
+                self.decoder.append(
+                    # UpsampleAttention(
+                    #     dim=dim,
+                    #     upsample_factor=2,
+                    #     heads=num_heads,
+                    #     causal=False,
+                    # )
+                    UpsampleConv(dim)
+                )
+
+        self.decoder.append(nn.LayerNorm(dim))
+
+    def forward(self, x: torch.Tensor):
+        for layer in self.decoder:
+            x = layer(x)
+
+        return x
+
 
 class MidiVQVAETransformer(nn.Module):
     def __init__(
@@ -16,6 +136,7 @@ class MidiVQVAETransformer(nn.Module):
         num_heads: int = 12,
         fsq_levels: list[int] = [8, 8, 8, 6, 5],
         mlp_ratio: float = 4.0,
+        change_resolution_at_depth: list[int] = [],
     ):
         super().__init__()
 
@@ -31,29 +152,15 @@ class MidiVQVAETransformer(nn.Module):
 
         # self.cape = CAPE1d(quarter_dim, max_global_shift=0.1, max_local_shift=0.5, max_global_scaling=1.4, batch_first=True)
 
-        # encoder
-        self.encoder = nn.ModuleList(
-            [
-                nn.ModuleList([
-                    Block(
-                        dim=dim,
-                        num_heads=num_heads,
-                        mlp_ratio=mlp_ratio,
-                        qkv_bias=True,
-                    ),
-                    Block(
-                        dim=dim,
-                        num_heads=num_heads,
-                        mlp_ratio=mlp_ratio,
-                        qkv_bias=True,
-                    ),
-                    nn.LayerNorm(dim),
-                    DownsampleAttention(dim, downsample_factor=2, heads=num_heads),
-                ])
-                for _ in range(depth)
-            ]
+        
+        self.encoder = TransformerEncoder(
+            dim=dim,
+            depth=depth,
+            num_heads=num_heads,
+            mlp_ratio=mlp_ratio,
+            change_resolution_at_depth=change_resolution_at_depth,
         )
-        self.out_norm = nn.LayerNorm(dim)
+        
 
         # fsq
         self.q_proj_in = nn.Linear(dim, quantization_dim)
@@ -61,29 +168,13 @@ class MidiVQVAETransformer(nn.Module):
         self.q_proj_out = nn.Linear(quantization_dim, dim)
 
         # decoder
-        self.decoder = nn.ModuleList(
-            [
-                nn.ModuleList([
-                    Block(
-                        dim=dim,
-                        num_heads=num_heads,
-                        mlp_ratio=mlp_ratio,
-                        qkv_bias=True,
-                    ),
-                    Block(
-                        dim=dim,
-                        num_heads=num_heads,
-                        mlp_ratio=mlp_ratio,
-                        qkv_bias=True,
-                    ),
-                    nn.LayerNorm(dim),
-                    UpsampleAttention(dim, upsample_factor=2, heads=num_heads),
-                ])
-                for _ in range(depth)
-            ]
+        self.decoder = TransformerDecoder(
+            dim=dim,
+            depth=depth,
+            num_heads=num_heads,
+            mlp_ratio=mlp_ratio,
+            change_resolution_at_depth=change_resolution_at_depth,
         )
-
-        self.out_norm = nn.LayerNorm(dim)
 
         self.pitch_out = TransformerFeatureProjection(dim, 88)
         self.velocity_out = TransformerFeatureProjection(dim, 128)
@@ -114,13 +205,8 @@ class MidiVQVAETransformer(nn.Module):
 
     def quantize(self, pitch: torch.Tensor, velocity: torch.Tensor, start: torch.Tensor, end: torch.Tensor):
         x = self._features_to_embedding(pitch, velocity, start, end)
-        for block1, block2, norm, down in self.encoder:
-            x = block1(x)
-            x = block2(x)
-            x = norm(x)
-            x = down(x)
-
-        x = self.out_norm(x)
+        
+        x = self.encoder(x)
         x = self.q_proj_in(x)
         _, indices = self.quantizer(x)
 
@@ -129,14 +215,7 @@ class MidiVQVAETransformer(nn.Module):
     def dequantize(self, indices: torch.Tensor):
         codes = self.quantizer.indices_to_codes(indices)
         x = self.q_proj_out(codes)
-
-        for block1, block2, norm, up in self.decoder:
-            x = block1(x)
-            x = block2(x)
-            x = norm(x)
-            x = up(x)
-
-        x = self.out_norm(x)
+        self.decoder(x)
 
         pitch_hat, velocity_hat, dstart_hat, duration_hat = self._embedding_to_features(x)
 
@@ -145,25 +224,13 @@ class MidiVQVAETransformer(nn.Module):
     def forward(self, pitch: torch.Tensor, velocity: torch.Tensor, start: torch.Tensor, end: torch.Tensor):
         x = self._features_to_embedding(pitch, velocity, start, end)
 
-        for block1, block2, norm, down in self.encoder:
-            x = block1(x)
-            x = block2(x)
-            # x = norm(x)
-            # x = down(x)
-
-        x = self.out_norm(x)
+        x = self.encoder(x)
 
         x = self.q_proj_in(x)
         codes, _ = self.quantizer(x)
         x = self.q_proj_out(codes)
 
-        for block1, block2, norm, up in self.decoder:
-            x = block1(x)
-            x = block2(x)
-            # x = norm(x)
-            # x = up(x)
-        
-        x = self.out_norm(x)
+        x = self.decoder(x)
 
         pitch_hat, velocity_hat, dstart_hat, duration_hat = self._embedding_to_features(x)
 

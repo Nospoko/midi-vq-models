@@ -21,15 +21,16 @@ train:
   loss_lambdas:
     pitch: 1.
     velocity: 1.
-    dstart: 10.
+    dstart: 50.
     duration: 1.
 
 model:
   dim: 256
-  depth: 4
+  depth: 8
   num_heads: 8
   mlp_ratio: 2
   fsq_levels: [8, 8, 8, 6, 5]
+  change_resolution_at_depth: []
 
 paths:
   save_ckpt_dir: "checkpoints" # directory where checkpoints will be saved
